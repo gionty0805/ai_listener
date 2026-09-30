@@ -1,0 +1,8 @@
+# 도메인을 실제 값으로 변경. 사내망 전용이면 `tls internal` 사용
+listener.example.com {
+	encode gzip
+	request_body {
+		max_size 60MB
+	}
+	reverse_proxy app:3000
+}

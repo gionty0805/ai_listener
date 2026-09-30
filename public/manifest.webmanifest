@@ -1,0 +1,9 @@
+{
+  "name": "AI Listener",
+  "short_name": "AI Listener",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#1f3a8a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
