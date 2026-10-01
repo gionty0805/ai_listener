@@ -49,12 +49,3 @@ test/            node:test 테스트
 | ![](docs/images/01-new-session.png) | ![](docs/images/02-recording.png) | ![](docs/images/03-meeting-result.png) | ![](docs/images/04-interview-result.png) |
 
 *(스크린샷은 데모 모드 결과입니다. Claude 연동 시 실제 요약·평가가 채워집니다.)*
-
-## 프로젝트 보드 관리 (GitHub Actions)
-[Project items](.github/workflows/project-items.yml) 워크플로로 [프로젝트 보드](https://github.com/users/gionty0805/projects/2)의 아이템을 조회·생성·수정·보관·삭제합니다.
-- 준비: 저장소 시크릿 `PROJECT_TOKEN`에 `project` 권한이 있는 PAT 등록
-- 실행: Actions → **Project items** → Run workflow → `action` 선택
-  - `list`: 아이템 ID(`PVTI_...`)와 필드 값, 선택 가능한 옵션을 실행 요약에 표시
-  - `create`: 드래프트 생성 (`title`, `body`, `fields`) / `add-issue`: 이 저장소 이슈·PR 추가 (`issue_number`)
-  - `update`: 필드 값 변경 (`item_id`, `fields`, 드래프트는 `title`/`body`도) / `archive`·`unarchive`·`delete`
-  - `fields` 예: `{"Status":"In Progress","Priority":"High","Due":"2026-10-31"}` (빈 문자열은 값 비우기)
