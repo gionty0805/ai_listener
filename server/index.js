@@ -2,6 +2,11 @@ import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 
 const config = loadConfig();
+if (!config.accessToken && !config.allowNoAuth) {
+  console.error('APP_ACCESS_TOKEN 이 설정되지 않았습니다. 운영 환경에서는 접근 코드가 필요합니다 (의도적으로 끄려면 ALLOW_NO_AUTH=true).');
+  process.exit(1);
+}
+if (!config.accessToken) console.warn('⚠ 접근 코드 없이 실행 중입니다. 같은 네트워크의 누구나 기록을 열람할 수 있습니다.');
 const { server } = await createApp(config);
 
 server.listen(config.port, () => {

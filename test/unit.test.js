@@ -100,3 +100,13 @@ test('mock 요약 → report 렌더링', async () => {
   assert.match(toShortText(session), /결정 사항/);
   assert.match(renderLines(lines), /\[00:05\] 이:/);
 });
+
+test('RateLimiter: 윈도 내 한도 초과 시 대기 초 반환, 윈도 경과 후 초기화', async () => {
+  const { RateLimiter } = await import('../server/ratelimit.js');
+  const rl = new RateLimiter({ windowMs: 1000, max: 2 });
+  assert.equal(rl.check('a', 0), 0);
+  assert.equal(rl.check('a', 10), 0);
+  assert.equal(rl.check('a', 20), 1);
+  assert.equal(rl.check('b', 20), 0);
+  assert.equal(rl.check('a', 1001), 0);
+});

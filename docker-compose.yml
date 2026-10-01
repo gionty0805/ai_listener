@@ -5,6 +5,7 @@ services:
     env_file: .env
     environment:
       DATA_DIR: /app/data
+      TRUST_PROXY: "true"   # Caddy 뒤에서 실제 클라이언트 IP로 속도 제한
     volumes:
       - ./data:/app/data
     restart: unless-stopped

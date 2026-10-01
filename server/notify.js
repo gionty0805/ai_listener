@@ -36,6 +36,12 @@ export class Notifier {
     if (!recipients.length || bad.length) {
       throw Object.assign(new Error(bad.length ? `잘못된 이메일 주소: ${bad.join(', ')}` : '수신자가 없습니다.'), { status: 400 });
     }
+    if (recipients.length > 50) throw Object.assign(new Error('수신자는 최대 50명입니다.'), { status: 400 });
+    const allowed = this.config.smtp.allowedDomains || [];
+    const denied = allowed.length ? recipients.filter((r) => !allowed.includes(r.split('@').pop().toLowerCase())) : [];
+    if (denied.length) {
+      throw Object.assign(new Error(`허용되지 않은 수신 도메인: ${denied.join(', ')} (허용: ${allowed.join(', ')})`), { status: 403 });
+    }
     if (!session.summary) throw Object.assign(new Error('요약이 아직 완료되지 않았습니다.'), { status: 409 });
     const mailer = await this.#mailer();
     const kind = session.type === 'interview' ? '면접 평가' : '회의록';
@@ -69,8 +75,8 @@ export class Notifier {
         };
       case 'generic':
         return { text, session: { id: session.id, type: session.type, title: session.title }, summary: session.summary };
-      default: // slack incoming webhook (mrkdwn)
-        return { text };
+      default: // slack incoming webhook (mrkdwn). 전사 유래 텍스트의 <!channel> 등 멘션·링크 주입 방지
+        return { text: text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') };
     }
   }
 

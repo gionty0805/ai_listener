@@ -26,7 +26,7 @@ function token() {
 async function api(path, { method = 'GET', body, headers = {}, raw = false } = {}) {
   const res = await fetch(path, {
     method,
-    headers: { 'x-access-token': token(), ...(body && !(body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...headers },
+    headers: { 'x-access-token': token(), ...(method !== 'GET' && !(body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...headers },
     body: body instanceof Blob ? body : body ? JSON.stringify(body) : undefined,
   });
   if (res.status === 401) {
@@ -71,8 +71,8 @@ async function viewHome() {
     <div class="card">
       <h2>새 녹음 시작</h2>
       <div class="seg">
-        <button onclick="location.hash='#/new/meeting'">🗓️<b>회의</b><span class="muted">회의록 · 할 일 · 일정 추출</span></button>
-        <button onclick="location.hash='#/new/interview'">🧑‍💼<b>면접</b><span class="muted">질의응답 · 역량 평가 초안</span></button>
+        <a class="btn" href="#/new/meeting">🗓️<b>회의</b><span class="muted">회의록 · 할 일 · 일정 추출</span></a>
+        <a class="btn" href="#/new/interview">🧑‍💼<b>면접</b><span class="muted">질의응답 · 역량 평가 초안</span></a>
       </div>
     </div>
     <div class="card"><h2>기록</h2><div class="list" id="list"><div class="spinner"></div></div></div>`;

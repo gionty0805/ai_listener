@@ -21,7 +21,8 @@ const summarizer = new CountingSummarizer();
 before(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ail-'));
   const config = loadConfig({
-    DATA_DIR: dir, SUMMARIZER: 'mock', CHUNK_MINUTES: '10', APP_ACCESS_TOKEN: 'secret',
+    DATA_DIR: dir, SUMMARIZER: 'mock', CHUNK_MINUTES: '10', APP_ACCESS_TOKEN: 'secret', RATE_LIMIT_COSTLY_PER_MINUTE: '1000',
+    MAIL_ALLOWED_DOMAINS: 'example.com',
     WEBHOOK_URL: 'https://hooks.example.com/x', WEBHOOK_FORMAT: 'slack',
   });
   const fetchImpl = async (url, init) => { hooks.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200 }; };
@@ -95,7 +96,7 @@ test('회의: 전사 업로드 → 라이브 청크 → 종료 → 요약 → �
   assert.equal(n.status, 200);
   assert.match(hooks.at(-1).body.text, /주간 회의/);
 
-  const bad = await call(`/api/sessions/${s.id}/notify`, { method: 'POST', body: { email: { to: ['x@y.com'] } } });
+  const bad = await call(`/api/sessions/${s.id}/notify`, { method: 'POST', body: { email: { to: ['x@example.com'] } } });
   assert.equal(bad.status, 400); // SMTP 미설정
 
   const md = await call(`/api/sessions/${s.id}/export.md`);
@@ -135,4 +136,58 @@ test('빈 전사로 종료하면 오류 상태', async () => {
   await call(`/api/sessions/${s.id}/finish`, { method: 'POST', body: {} });
   const e = await waitFor(s.id, 'error');
   assert.match(e.error, /전사된 내용이 없습니다/);
+});
+
+test('보안: CSP·프레임 차단 헤더', async () => {
+  const res = await fetch(base + '/');
+  assert.match(res.headers.get('content-security-policy'), /script-src 'self'/);
+  assert.equal(res.headers.get('x-frame-options'), 'DENY');
+});
+
+test('보안: CSRF — simple request Content-Type 거부', async () => {
+  for (const ct of ['text/plain', 'application/x-www-form-urlencoded', '']) {
+    const res = await fetch(base + '/api/sessions', {
+      method: 'POST', headers: { 'x-access-token': 'secret', ...(ct ? { 'content-type': ct } : {}) },
+      body: JSON.stringify({ type: 'meeting', consent: true }),
+    });
+    assert.equal(res.status, 415, ct || '(없음)');
+  }
+});
+
+test('보안: 메일 수신 도메인 허용목록', async () => {
+  const { json: s } = await call('/api/sessions', { method: 'POST', body: { type: 'meeting', consent: true } });
+  await call(`/api/sessions/${s.id}/transcript`, { method: 'POST', body: { lines: [{ t: 0, text: '안녕하세요' }] } });
+  await call(`/api/sessions/${s.id}/finish`, { method: 'POST', body: {} });
+  await waitFor(s.id, 'done');
+  const r = await app.notifier.sendEmail(await app.store.get(s.id), ['a@evil.com']).catch((e) => e);
+  assert.equal(r.status, 403);
+});
+
+test('보안: Slack 멘션 주입 이스케이프', async () => {
+  const { json: s } = await call('/api/sessions', { method: 'POST', body: { type: 'meeting', title: '<!channel> 공지', consent: true } });
+  await call(`/api/sessions/${s.id}/transcript`, { method: 'POST', body: { lines: [{ t: 0, text: '<!here> 확인 부탁' }] } });
+  await call(`/api/sessions/${s.id}/finish`, { method: 'POST', body: {} });
+  await waitFor(s.id, 'done');
+  await call(`/api/sessions/${s.id}/notify`, { method: 'POST', body: { webhook: true } });
+  assert.doesNotMatch(hooks.at(-1).body.text, /<!/);
+});
+
+test('보안: 속도 제한과 세션당 전사 상한', async () => {
+  const config = loadConfig({ DATA_DIR: path.join(dir, 'rl'), SUMMARIZER: 'mock', RATE_LIMIT_COSTLY_PER_MINUTE: '2', MAX_TRANSCRIPT_LINES: '3' });
+  const a = await createApp(config, { log: quiet });
+  await new Promise((r) => a.server.listen(0, r));
+  const b = `http://127.0.0.1:${a.server.address().port}`;
+  const post = (p, body) => fetch(b + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const statuses = [];
+  let id;
+  for (let i = 0; i < 3; i++) {
+    const r = await post('/api/sessions', { type: 'meeting', consent: true });
+    statuses.push(r.status);
+    if (r.ok) id ??= (await r.json()).id;
+  }
+  assert.deepEqual(statuses, [200, 200, 429]);
+  const line = (n) => Array.from({ length: n }, (_, i) => ({ t: i, text: 'x' }));
+  assert.equal((await post(`/api/sessions/${id}/transcript`, { lines: line(3) })).status, 200);
+  assert.equal((await post(`/api/sessions/${id}/transcript`, { lines: line(1) })).status, 413);
+  await new Promise((r) => a.server.close(r));
 });

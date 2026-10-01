@@ -10,12 +10,20 @@ import { Notifier } from './notify.js';
 import { WhisperStt } from './stt.js';
 import { createSummarizer } from './summarizer.js';
 import { toMarkdown } from './report.js';
+import { RateLimiter } from './ratelimit.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png',
 };
+// CSP: 스크립트·스타일은 같은 출처만 (인라인 스크립트 금지). 인라인 style 속성만 허용
+const CSP = [
+  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+  "connect-src 'self'", "media-src 'self' blob:", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
+].join('; ');
+// CORS "simple request" 로 보낼 수 있는 Content-Type — 다른 사이트의 폼/fetch 로 사전요청 없이 호출될 수 있으므로 거부(CSRF 방어)
+const SIMPLE_CT = new Set(['', 'text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data']);
 const AUDIO_EXT = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'm4a', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' };
 
 export const DEFAULT_RUBRIC = ['직무 전문성', '문제 해결력', '커뮤니케이션', '협업', '학습·성장 태도', '직무 동기'];
@@ -44,6 +52,8 @@ function readBody(req, limit) {
 }
 
 async function readJson(req) {
+  const ct = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (ct !== 'application/json') throw new HttpError(415, 'Content-Type: application/json 이 필요합니다.');
   const buf = await readBody(req, 2 * 1024 * 1024);
   if (!buf.length) return {};
   try {
@@ -81,6 +91,14 @@ export async function createApp(config, overrides = {}) {
   const stt = overrides.stt || new WhisperStt(config.stt, overrides.fetch);
   const log = overrides.log || console;
   const pipeline = new Pipeline({ store, summarizer, config, notifier, log });
+  const apiLimiter = new RateLimiter({ max: config.limits.apiPerMinute });
+  const costlyLimiter = new RateLimiter({ max: config.limits.costlyPerMinute });
+  const COSTLY = /^\/api\/sessions(\/[a-f0-9]{16}\/(finish|summarize|notify))?$/;
+  const clientIp = (req) => {
+    // 리버스 프록시(Caddy 등) 뒤에서는 프록시가 마지막에 덧붙인 X-Forwarded-For 값이 실제 클라이언트
+    if (config.trustProxy && req.headers['x-forwarded-for']) return String(req.headers['x-forwarded-for']).split(',').pop().trim();
+    return req.socket.remoteAddress || 'unknown';
+  };
 
   // 재시작 복구: 요약 도중 서버가 내려간 세션 재처리
   for (const s of await store.list()) if (s.status === 'summarizing') pipeline.finish(s.id);
@@ -150,6 +168,9 @@ export async function createApp(config, overrides = {}) {
       }))
       .filter((l) => l.text);
     if (!lines.length) return { added: 0 };
+    if ((await store.transcript(id)).length + lines.length > config.limits.maxTranscriptLines) {
+      throw new HttpError(413, '세션당 전사 분량 한도를 초과했습니다. 새 세션으로 이어서 녹음하세요.');
+    }
     await store.appendTranscript(id, lines);
     pipeline.onTranscript(id); // 비동기: 닫힌 청크가 있으면 중간 노트 생성
     return { added: lines.length };
@@ -167,6 +188,7 @@ export async function createApp(config, overrides = {}) {
     const speaker = String(url.searchParams.get('speaker') || '').slice(0, 50);
     if (!Number.isInteger(seq) || seq < 0 || !Number.isFinite(startMs)) throw new HttpError(400, 'seq/startMs 가 필요합니다.');
     if (s.audioSegments.some((a) => a.seq === seq)) return { duplicate: true }; // 재전송 멱등 처리
+    if (s.audioSegments.length >= config.limits.maxAudioSegments) throw new HttpError(413, '세션당 녹음 분량 한도를 초과했습니다.');
     const buf = await readBody(req, 50 * 1024 * 1024);
     await store.saveAudio(id, seq, ext, buf);
     let added = 0;
@@ -247,8 +269,19 @@ export async function createApp(config, overrides = {}) {
     res.setHeader('x-content-type-options', 'nosniff');
     res.setHeader('referrer-policy', 'same-origin');
     res.setHeader('permissions-policy', 'microphone=(self)');
+    res.setHeader('content-security-policy', CSP);
+    res.setHeader('x-frame-options', 'DENY');
     try {
       if (!url.pathname.startsWith('/api/')) return await serveStatic(req, res, url);
+      const ip = clientIp(req);
+      const wait = apiLimiter.check(ip) || (req.method === 'POST' && COSTLY.test(url.pathname) ? costlyLimiter.check(ip) : 0);
+      if (wait) {
+        res.setHeader('retry-after', String(wait));
+        throw new HttpError(429, `요청이 너무 많습니다. ${wait}초 후 다시 시도하세요.`);
+      }
+      if (req.method !== 'GET' && SIMPLE_CT.has(String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase())) {
+        throw new HttpError(415, '허용되지 않는 Content-Type 입니다.');
+      }
       if (config.accessToken && url.pathname !== '/api/config' && !safeEqual(req.headers['x-access-token'] || '', config.accessToken)) {
         throw new HttpError(401, '접근 코드가 필요합니다.');
       }

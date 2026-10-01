@@ -34,7 +34,7 @@ button.primary, .btn.primary { background: var(--primary); border-color: var(--p
 button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.seg button { justify-content: center; padding: 16px; flex-direction: column; }
+.seg button, .seg a { justify-content: center; padding: 16px; flex-direction: column; text-align: center; }
 .seg button[aria-pressed=true] { border-color: var(--primary); background: var(--primary-weak); color: var(--primary); font-weight: 700; }
 .list a { display: flex; justify-content: space-between; gap: 8px; padding: 12px 4px; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--text); }
 .list a:last-child { border-bottom: 0; }

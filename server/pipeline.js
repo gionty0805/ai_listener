@@ -6,6 +6,7 @@
 //      전사문 >  SINGLE_PASS_MAX_CHARS : 청크 노트들을 합쳐 최종 요약(reduce)
 //  ──▶ 결과 저장 ──▶ (설정 시) 이메일/웹훅 자동 발송 ──▶ 원본 음성 삭제(기본)
 import { planChunks, overlapContext, transcriptChars, formatTime } from './chunker.js';
+import { SummaryError } from './summarizer.js';
 
 export class Pipeline {
   constructor({ store, summarizer, config, notifier, log = console }) {
@@ -44,7 +45,8 @@ export class Pipeline {
         this.log.error(`[pipeline:${id}] 요약 실패`, err);
         await this.store.update(id, (s) => {
           s.status = 'error';
-          s.error = err.message || String(err);
+          // 내부 오류 상세(경로 등)는 로그에만 남기고 화면에는 일반 메시지
+          s.error = err instanceof SummaryError ? err.message : '요약 중 내부 오류가 발생했습니다. 관리자에게 문의하세요.';
         });
       }
     });
